@@ -1,4 +1,5 @@
 import os
+import re
 import argparse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -11,13 +12,11 @@ class SlackPoster:
     def __init__(self, token: str, default_channel: Optional[str] = None):
         self.client = WebClient(token=token)
         self.default_channel = default_channel or os.environ.get("SLACK_CHANNEL")
+        self._channel_cache: Dict[str, str] = {}
 
-    def _resolve_channel_id(self, channel: str) -> Optional[str]:
-        if not channel:
-            return None
-        if channel.startswith("C") or channel.startswith("G"):
-            return channel
-        name = channel.lstrip("#")
+    def _load_channel_cache(self) -> None:
+        if self._channel_cache:
+            return
         try:
             result = self.client.conversations_list(
                 exclude_archived=True,
@@ -26,8 +25,7 @@ class SlackPoster:
             )
             channels = result.get("channels", [])
             for ch in channels:
-                if ch.get("name") == name:
-                    return ch.get("id")
+                self._channel_cache[ch.get("name", "")] = ch.get("id", "")
             while result.get("response_metadata", {}).get("next_cursor"):
                 cursor = result["response_metadata"]["next_cursor"]
                 result = self.client.conversations_list(
@@ -36,13 +34,29 @@ class SlackPoster:
                     limit=1000,
                     cursor=cursor,
                 )
-                channels = result.get("channels", [])
-                for ch in channels:
-                    if ch.get("name") == name:
-                        return ch.get("id")
+                for ch in result.get("channels", []):
+                    self._channel_cache[ch.get("name", "")] = ch.get("id", "")
         except SlackApiError:
+            pass
+
+    def _resolve_channel_id(self, channel: str) -> Optional[str]:
+        if not channel:
             return None
-        return None
+        if channel.startswith("C") or channel.startswith("G"):
+            return channel
+        name = channel.lstrip("#")
+        self._load_channel_cache()
+        return self._channel_cache.get(name)
+
+    def _convert_channel_links(self, text: str) -> str:
+        self._load_channel_cache()
+        def replace_channel(match: re.Match) -> str:
+            channel_name = match.group(1)
+            channel_id = self._channel_cache.get(channel_name)
+            if channel_id:
+                return f"<#{channel_id}|{channel_name}>"
+            return match.group(0)
+        return re.sub(r"#([^\s（()）\[\]]+)", replace_channel, text)
 
     def _split_into_chunks(self, text: str, max_length: int = 3500) -> List[str]:
         chunks: List[str] = []
@@ -74,7 +88,8 @@ class SlackPoster:
         current_week = datetime.now().strftime("%Y年%m月第%U週")
         header = f"📰 *今週の社内ニュース - {current_week}*\n\n"
         footer = f"\n\n---\n_Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by Weekly News Bot_"
-        return header + summary + footer
+        content = self._convert_channel_links(summary)
+        return header + content + footer
 
     def post(self, text: str, channel: Optional[str] = None, thread: bool = True) -> Optional[str]:
         channel_id = self._resolve_channel_id(channel or self.default_channel or "")

@@ -15,6 +15,35 @@ class SlackMessageCollector:
         self.client = WebClient(token=token)
         self.messages = []
         self.excluded_channels = self.get_excluded_channels()
+        self.users = {}
+
+    def get_users(self) -> Dict[str, Dict]:
+        if self.users:
+            return self.users
+        try:
+            print("👥 ユーザー一覧を取得中...")
+            response = self.client.users_list(limit=200)
+            members = response.get('members', [])
+            while response.get('response_metadata', {}).get('next_cursor'):
+                cursor = response['response_metadata']['next_cursor']
+                time.sleep(0.3)
+                response = self.client.users_list(limit=200, cursor=cursor)
+                members.extend(response.get('members', []))
+            for member in members:
+                if member.get('is_bot') or member.get('id') == 'USLACKBOT':
+                    continue
+                user_id = member.get('id')
+                self.users[user_id] = {
+                    'id': user_id,
+                    'name': member.get('name', ''),
+                    'real_name': member.get('real_name', member.get('name', '')),
+                    'display_name': member.get('profile', {}).get('display_name', '')
+                }
+            print(f"✅ {len(self.users)} ユーザーを取得")
+            return self.users
+        except SlackApiError as e:
+            print(f"❌ ユーザー取得エラー: {e.response.get('error', '')}")
+            return {}
 
     def get_excluded_channels(self) -> List[str]:
         excluded = []
@@ -81,11 +110,13 @@ class SlackMessageCollector:
             
             messages = response.get('messages', [])
             
-            # 各メッセージにチャンネル情報を追加
             for msg in messages:
                 msg['channel_id'] = channel_id
                 msg['channel_name'] = channel_name
                 msg['timestamp_formatted'] = datetime.fromtimestamp(float(msg.get('ts', 0))).isoformat()
+                user_id = msg.get('user', '')
+                if user_id and user_id in self.users:
+                    msg['user_name'] = self.users[user_id].get('real_name', '')
             
             all_messages.extend(messages)
             
@@ -109,7 +140,9 @@ class SlackMessageCollector:
                     msg['channel_id'] = channel_id
                     msg['channel_name'] = channel_name
                     msg['timestamp_formatted'] = datetime.fromtimestamp(float(msg.get('ts', 0))).isoformat()
-                
+                    user_id = msg.get('user', '')
+                    if user_id and user_id in self.users:
+                        msg['user_name'] = self.users[user_id].get('real_name', '')
                 all_messages.extend(messages)
             
             if all_messages:
@@ -136,7 +169,8 @@ class SlackMessageCollector:
         print(f"📊 Slack メッセージ収集を開始（過去{days}日間）")
         print(f"{'='*60}\n")
         
-        # ボット情報を表示
+        self.get_users()
+        
         bot_info = self.get_bot_info()
         if bot_info:
             print(f"🤖 ボット: {bot_info['bot_name']} ({bot_info['team']})")
@@ -251,7 +285,8 @@ class SlackMessageCollector:
                 'total_messages': len(self.messages),
                 'channels_processed': channels_processed,
                 'channels_with_messages': channels_with_messages
-            }
+            },
+            'users': self.users
         }
     
     def save_messages(self, filename: str = None) -> str:

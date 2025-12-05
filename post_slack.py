@@ -70,60 +70,26 @@ class SlackPoster:
             chunks.append(current)
         return chunks
 
-    def format_slack_message(self, summary: str) -> Dict[str, Any]:
-        """Slack投稿用にメッセージを整形"""
+    def format_slack_message(self, summary: str) -> str:
         current_week = datetime.now().strftime("%Y年%m月第%U週")
-        
-        blocks = [
-            {
-                "type": "header",
-                "text": {
-                    "type": "plain_text",
-                    "text": f"📰 今週の社内ニュース - {current_week}",
-                    "emoji": True
-                }
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": summary
-                }
-            },
-            {
-                "type": "divider"
-            },
-            {
-                "type": "context",
-                "elements": [
-                    {
-                        "type": "mrkdwn",
-                        "text": f"_Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by Weekly News Bot_"
-                    }
-                ]
-            }
-        ]
-        
-        return {
-            "text": f"📰 今週の社内ニュース - {current_week}",
-            "blocks": blocks
-        }
+        header = f"📰 *今週の社内ニュース - {current_week}*\n\n"
+        footer = f"\n\n---\n_Generated at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} by Weekly News Bot_"
+        return header + summary + footer
 
     def post(self, text: str, channel: Optional[str] = None, thread: bool = True) -> Optional[str]:
         channel_id = self._resolve_channel_id(channel or self.default_channel or "")
         if not channel_id:
             print("❌ チャンネルが見つかりませんでした")
             return None
-        text_chunks = self._split_into_chunks(text)
+        formatted_text = self.format_slack_message(text)
+        text_chunks = self._split_into_chunks(formatted_text)
         if not text_chunks:
             print("❌ 投稿するテキストが空です")
             return None
         try:
-            payload = self.format_slack_message(text_chunks[0])
             first = self.client.chat_postMessage(
                 channel=channel_id,
-                text=payload["text"],
-                blocks=payload["blocks"],
+                text=text_chunks[0],
             )
             thread_ts = first.get("ts") if thread else None
             for chunk in text_chunks[1:]:

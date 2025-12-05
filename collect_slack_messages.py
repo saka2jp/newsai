@@ -17,8 +17,14 @@ class SlackMessageCollector:
         self.excluded_channels = self.get_excluded_channels()
 
     def get_excluded_channels(self) -> List[str]:
+        excluded = []
         exclude_raw = os.environ.get("SLACK_EXCLUDE_CHANNELS", "")
-        return exclude_raw.split(",") if exclude_raw else []
+        if exclude_raw:
+            excluded.extend(exclude_raw.split(","))
+        post_channel = os.environ.get("SLACK_CHANNEL", "")
+        if post_channel and post_channel not in excluded:
+            excluded.append(post_channel)
+        return excluded
         
     def get_bot_info(self) -> Dict:
         """ボットの情報を取得"""

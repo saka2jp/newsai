@@ -25,13 +25,14 @@ def main() -> int:
     collector = SlackMessageCollector(slack_token)
     result = collector.collect_messages(days=7, auto_join=True)
     messages = result.get("messages", [])
+    users = result.get("users", {})
     if not messages:
         print("⚠️ メッセージが取得できませんでした")
         return 1
 
     print("🧠 今週の話題ニュースを生成します...")
     generator = WeeklyNewsGenerator(openai_key)
-    summary = generator.generate_news_text(days=7, messages=messages)
+    summary = generator.generate_news_text(days=7, messages=messages, users=users)
     if not summary:
         print("❌ 要約の生成に失敗しました")
         return 1

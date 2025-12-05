@@ -12,6 +12,7 @@ load_dotenv()
 class WeeklyNewsGenerator:
     def __init__(self, openai_api_key: str):
         self.openai_client = OpenAI(api_key=openai_api_key)
+        self.users = {}
         
     def load_messages(self, filename: str) -> List[Dict]:
         """保存されたメッセージファイルを読み込む"""
@@ -76,22 +77,35 @@ class WeeklyNewsGenerator:
             # 改行削除
             text = re.sub(r'\n', '', text)
             
+            user_name = msg.get('user_name', '')
             channels[channel].append({
-                'text': text[:500]  # 長すぎるメッセージは切り詰め
+                'text': text[:500],
+                'user_name': user_name
             })
         
-        # チャンネルごとに整形
         for channel, msgs in channels.items():
             if msgs:
                 formatted_messages.append(f"\n#チャンネル：【#{channel}】")
-                for msg in msgs[-100:]:  # 各チャンネル最新100件まで
-                    formatted_messages.append(f"- {msg['text']}")
+                for msg in msgs[-100:]:
+                    user_part = f"[{msg['user_name']}] " if msg.get('user_name') else ""
+                    formatted_messages.append(f"- {user_part}{msg['text']}")
         
         return "\n".join(formatted_messages)
+
+    def prepare_users_for_analysis(self) -> str:
+        if not self.users:
+            return ""
+        user_list = []
+        for user_id, user_info in self.users.items():
+            real_name = user_info.get('real_name', '')
+            if real_name:
+                user_list.append(f"- {real_name}: <@{user_id}>")
+        return "\n".join(user_list)
     
     def generate_news_summary(self, messages_text: str) -> str:
-        """OpenAI APIを使用してニュースサマリーを生成"""
         print("🤖 OpenAI APIで分析中...")
+        
+        users_text = self.prepare_users_for_analysis()
         
         try:
             prompt = """#指示
@@ -104,27 +118,37 @@ class WeeklyNewsGenerator:
 - 番外編として、ユーモアのあるニュースを5件選んでください。
 - 出力結果には【注目ニュース】と【番外編】の2つのセクションを作成してください。
 - 出力結果には枕詞や最後のコメントは含めないでください。
+- 各ニュースに関連するメンバーを推論してください。メッセージの投稿者だけでなく、メッセージ内容から関連すると推論される人を含めてください。関連度が高い順に最大5人まで選んでください。
 
 #出力形式
+- 各ニュースの間には必ず空行を1行入れてください。
 - ニュースタイトル。タイトルの先頭にニュースの番号を付けてください。ニュースの最後にはタイトルに対応する絵文字を付けてください。ニュースタイトルは*で囲んでください。
 - 詳細説明（1-2文）。200字以内程度。
-- 関連チャンネル: #channel_name。ニュースが取り上げられているチャンネルを指定してください。
+- 関連チャンネルと関連メンバーは1行にまとめて括弧内にコンパクトに記載してください。関連メンバーはユーザー一覧のメンション形式（<@USER_ID>）をそのまま使用してください。
 
 例：
 【注目ニュース】
+
 1. *ニュースタイトル* 絵文字
-    ・詳細説明
-    ・関連チャンネル: #channel_name
-...
+詳細説明をここに記載します。
+（ #channel_name / 関連: <@U12345678>, <@U87654321>）
+
+2. *次のニュースタイトル* 絵文字
+詳細説明をここに記載します。
+（ #channel_name / 関連: <@U12345678>）
 
 【番外編】
+
 1. *ニュースタイトル* 絵文字
-    ・詳細説明
-    ・関連チャンネル: #channel_name
-...
+詳細説明をここに記載します。
+（ #channel_name / 関連: <@U12345678>）
+
+#ユーザー一覧
+以下は社内のユーザー一覧です。名前とメンション形式の対応を示しています。関連メンバーを出力する際は、必ずこの一覧にあるメンション形式を使用してください。
+""" + users_text + """
 
 #Slackメッセージ
-Slackメッセージはある会社内でやり取りされた1週間分のメッセージです。
+Slackメッセージはある会社内でやり取りされた1週間分のメッセージです。各メッセージには投稿者名が[名前]の形式で含まれています。
 """
             
             response = self.openai_client.chat.completions.create(
@@ -146,12 +170,13 @@ Slackメッセージはある会社内でやり取りされた1週間分のメ�
     
 
     
-    def generate_news_text(self, messages_file: str = None, days: int = 7, messages: List[Dict] = None) -> str:
-        """ニュースサマリーテキストを生成して返す"""
-        
+    def generate_news_text(self, messages_file: str = None, days: int = 7, messages: List[Dict] = None, users: Dict = None) -> str:
         print(f"\n{'='*60}")
         print(f"📰 週次ニュース生成を開始")
         print(f"{'='*60}\n")
+        
+        if users:
+            self.users = users
         
         if messages is None:
             if not messages_file:
